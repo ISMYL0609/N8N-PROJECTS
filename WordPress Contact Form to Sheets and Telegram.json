@@ -1,0 +1,208 @@
+{
+  "name": "WordPress Contact Form to Sheets and Telegram",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "8c461b6d-8552-404a-b746-62da3a9ab879",
+        "options": {}
+      },
+      "id": "b75a3cc3-6980-4114-b53f-5360068a9dfa",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.2,
+      "position": [
+        -64,
+        128
+      ],
+      "webhookId": "8c461b6d-8552-404a-b746-62da3a9ab879"
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "value": "https://docs.google.com/spreadsheets/d/1x8p_ZS2fxZfe4SznR_WR6zUDg7adH8YxYLbTZo6D7eA/edit?gid=0#gid=0",
+          "mode": "url"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "https://docs.google.com/spreadsheets/d/1x8p_ZS2fxZfe4SznR_WR6zUDg7adH8YxYLbTZo6D7eA/edit?gid=0#gid=0",
+          "mode": "url"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "Name": "={{ $json.body[\"your-name\"] || $json.body.name || \"\" }}",
+            "Email": "={{ $json.body[\"your-email\"] || $json.body.email || \"\" }}",
+            "Phone": "={{ $json.body[\"your-number\"] || $json.body.phone || \"\" }}",
+            "Message": "={{ $json.body[\"your-message\"] || $json.body.message || \"\" }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "Name",
+              "displayName": "Name",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Email",
+              "displayName": "Email",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Phone",
+              "displayName": "Phone",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Message",
+              "displayName": "Message",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "id": "9c562315-f90a-468d-b589-1b2af06ea326",
+      "name": "Log Lead to Google Sheets",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        224,
+        0
+      ],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "eAubNDfuR5PttLJg",
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "chatId": "5901797394",
+        "text": "=New website lead\nName: {{ String($json.body[\"your-name\"] || $json.body.name || \"\").replace(/&/g,\"&amp;\").replace(/</g,\"&lt;\").replace(/>/g,\"&gt;\") }}\nEmail: {{ String($json.body[\"your-email\"] || $json.body.email || \"\").replace(/&/g,\"&amp;\").replace(/</g,\"&lt;\").replace(/>/g,\"&gt;\") }}\nPhone: {{ String($json.body[\"your-number\"] || $json.body.phone || \"\").replace(/&/g,\"&amp;\").replace(/</g,\"&lt;\").replace(/>/g,\"&gt;\") }}\nMessage: {{ String($json.body[\"your-message\"] || $json.body.message || \"\").replace(/&/g,\"&amp;\").replace(/</g,\"&lt;\").replace(/>/g,\"&gt;\") }}",
+        "replyMarkup": "inlineKeyboard",
+        "inlineKeyboard": {
+          "rows": [
+            {
+              "row": {
+                "buttons": [
+                  {
+                    "text": "✅ Mark Contacted",
+                    "additionalFields": {
+                      "callback_data": "=claimed_{{ $('Webhook').item.json.body['your-email'] }}"
+                    }
+                  }
+                ]
+              }
+            }
+          ]
+        },
+        "additionalFields": {
+          "appendAttribution": false,
+          "parse_mode": "HTML"
+        }
+      },
+      "id": "aec6bfd9-d29c-4a3b-947e-b153314788c2",
+      "name": "Telegram Lead Alert",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        224,
+        192
+      ],
+      "webhookId": "86c0ea62-6039-4422-95eb-a5d41e0bfacd",
+      "credentials": {
+        "telegramApi": {
+          "id": "wBow0Rbm4jVWAAm5",
+          "name": "Telegram account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "sendTo": "={{ $json.body['your-email'] }}",
+        "subject": "=Thank you for reaching out, {{ $json.body['your-name'] }}!",
+        "message": "=Hi {{ $json.body['your-name'] }},<br><br> Thank you for contacting us! We have received your inquiry and our team will get back to you shortly.<br><br> Best regards,<br> The Team",
+        "options": {}
+      },
+      "id": "ceb5e7d6-0664-41fc-bd66-1b67ca282bf5",
+      "name": "Send a message",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.2,
+      "position": [
+        480,
+        128
+      ],
+      "webhookId": "36cc1a80-30eb-4cd6-a62d-71341ae485e2",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "AGLKmVbJR3ZvPNLE",
+          "name": "Gmail account"
+        }
+      }
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Log Lead to Google Sheets",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Telegram Lead Alert",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Send a message",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "errorWorkflow": "ZRhYIdDfNPaHMYte"
+  },
+  "versionId": "2db9ff7b-c1ae-4721-8c1a-d4c56157d053",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "8b83a8056a086d8e587ec683b22b485e021ed5cb1fd5a6b7336bf48ff09b8cf7"
+  },
+  "nodeGroups": [],
+  "id": "lCJusiyr1Ef8OY8j",
+  "tags": []
+}
