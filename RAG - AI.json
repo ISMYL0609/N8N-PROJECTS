@@ -1,0 +1,297 @@
+{
+  "name": "RAG - AI",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "f325e672-f7f0-4707-ba89-e74ad7495c97",
+      "name": "When clicking ‘Execute workflow’",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        -2992,
+        -112
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "download",
+        "fileId": {
+          "__rl": true,
+          "value": "https://drive.google.com/file/d/17bd0QyeCipYRylU4GRlwGrz5UChDO7a4/view?usp=drive_link",
+          "mode": "url"
+        },
+        "options": {}
+      },
+      "id": "b6ed71fa-dd1b-496b-8a9e-bc2c77b599a9",
+      "name": "Download file",
+      "type": "n8n-nodes-base.googleDrive",
+      "typeVersion": 3,
+      "position": [
+        -2768,
+        -112
+      ],
+      "credentials": {
+        "googleDriveOAuth2Api": {
+          "id": "SpsLErbbAOkQMP0x",
+          "name": "Google Drive account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "mode": "insert",
+        "pineconeIndex": {
+          "__rl": true,
+          "value": "srk-knowledge-base",
+          "mode": "list",
+          "cachedResultName": "srk-knowledge-base"
+        },
+        "options": {}
+      },
+      "id": "8b8b2d1b-eac0-4184-bf17-1b4e11c458eb",
+      "name": "Pinecone Vector Store",
+      "type": "@n8n/n8n-nodes-langchain.vectorStorePinecone",
+      "typeVersion": 1.3,
+      "position": [
+        -2544,
+        -112
+      ],
+      "credentials": {
+        "pineconeApi": {
+          "id": "2GHdyPKXz3ug7WG1",
+          "name": "Pinecone account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "modelName": "=models/gemini-embedding-001"
+      },
+      "id": "b3fb1183-e453-466d-8c55-8e53880f9a7d",
+      "name": "Embeddings Google Gemini",
+      "type": "@n8n/n8n-nodes-langchain.embeddingsGoogleGemini",
+      "typeVersion": 1,
+      "position": [
+        -2592,
+        144
+      ],
+      "credentials": {
+        "googlePalmApi": {
+          "id": "rNyvB0qVclIsWZlI",
+          "name": "Google Gemini(PaLM) Api account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "dataType": "binary",
+        "options": {}
+      },
+      "id": "05b976f1-f67e-4ad2-b99e-ab1bd3881488",
+      "name": "Default Data Loader",
+      "type": "@n8n/n8n-nodes-langchain.documentDefaultDataLoader",
+      "typeVersion": 1.1,
+      "position": [
+        -2464,
+        112
+      ]
+    },
+    {
+      "parameters": {
+        "public": true,
+        "initialMessages": "Hello! How can I help you?",
+        "options": {}
+      },
+      "id": "df5d078e-54df-4aa4-bc6f-f0f8fa1a07b2",
+      "name": "When chat message received",
+      "type": "@n8n/n8n-nodes-langchain.chatTrigger",
+      "typeVersion": 1.5,
+      "position": [
+        -2992,
+        416
+      ],
+      "webhookId": "f90482da-495d-4a1c-b50b-9d98d7e93cf1"
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "id": "c311166a-3cca-4ee1-86ab-d10a50cc8d7e",
+      "name": "AI Agent",
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 3.1,
+      "position": [
+        -1824,
+        -112
+      ]
+    },
+    {
+      "parameters": {
+        "modelName": "models/gemini-3.1-flash-lite",
+        "options": {}
+      },
+      "id": "80c4ef74-320a-4c65-9ee6-f6c8e36de2fd",
+      "name": "Google Gemini Chat Model",
+      "type": "@n8n/n8n-nodes-langchain.lmChatGoogleGemini",
+      "typeVersion": 1.2,
+      "position": [
+        -1872,
+        256
+      ],
+      "credentials": {
+        "googlePalmApi": {
+          "id": "rNyvB0qVclIsWZlI",
+          "name": "Google Gemini(PaLM) Api account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "mode": "retrieve-as-tool",
+        "toolDescription": "Searches and retrieves information from the knowledge base PDF",
+        "pineconeIndex": {
+          "__rl": true,
+          "value": "srk-knowledge-base",
+          "mode": "list",
+          "cachedResultName": "srk-knowledge-base"
+        },
+        "options": {}
+      },
+      "id": "2907c043-446f-4d94-870d-e255e70acf9a",
+      "name": "Pinecone Vector Store1",
+      "type": "@n8n/n8n-nodes-langchain.vectorStorePinecone",
+      "typeVersion": 1.3,
+      "position": [
+        -1648,
+        160
+      ],
+      "credentials": {
+        "pineconeApi": {
+          "id": "2GHdyPKXz3ug7WG1",
+          "name": "Pinecone account"
+        }
+      }
+    },
+    {
+      "parameters": {},
+      "id": "03ab6065-62f1-424f-8207-a93ce52b3a19",
+      "name": "Embeddings Google Gemini1",
+      "type": "@n8n/n8n-nodes-langchain.embeddingsGoogleGemini",
+      "typeVersion": 1,
+      "position": [
+        -1440,
+        368
+      ],
+      "credentials": {
+        "googlePalmApi": {
+          "id": "rNyvB0qVclIsWZlI",
+          "name": "Google Gemini(PaLM) Api account"
+        }
+      }
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "When clicking ‘Execute workflow’": {
+      "main": [
+        [
+          {
+            "node": "Download file",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Download file": {
+      "main": [
+        [
+          {
+            "node": "Pinecone Vector Store",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Embeddings Google Gemini": {
+      "ai_embedding": [
+        [
+          {
+            "node": "Pinecone Vector Store",
+            "type": "ai_embedding",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Default Data Loader": {
+      "ai_document": [
+        [
+          {
+            "node": "Pinecone Vector Store",
+            "type": "ai_document",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "When chat message received": {
+      "main": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Google Gemini Chat Model": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Pinecone Vector Store1": {
+      "ai_tool": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Embeddings Google Gemini1": {
+      "ai_embedding": [
+        [
+          {
+            "node": "Pinecone Vector Store1",
+            "type": "ai_embedding",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate"
+  },
+  "versionId": "639cb954-c2c8-4039-a3c2-63e6dff8ec88",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "8b83a8056a086d8e587ec683b22b485e021ed5cb1fd5a6b7336bf48ff09b8cf7"
+  },
+  "nodeGroups": [],
+  "id": "mAqAwylZNFqozcoW",
+  "tags": []
+}
