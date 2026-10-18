@@ -1,0 +1,203 @@
+{
+  "name": "Trending Topics to X (Gemini + Telegram Approval)",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "minutes",
+              "minutesInterval": 2
+            }
+          ]
+        }
+      },
+      "id": "567f09db-e053-4f0d-b1e9-9a556c51d8d5",
+      "name": "Schedule Trigger",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        -80,
+        -48
+      ]
+    },
+    {
+      "parameters": {
+        "maxItems": 4
+      },
+      "id": "3971be3c-2e66-4135-b703-360d54a07db7",
+      "name": "Keep Top Trend",
+      "type": "n8n-nodes-base.limit",
+      "typeVersion": 1,
+      "position": [
+        432,
+        -48
+      ]
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "=Write a sharp, insightful tweet about this breaking AI news:\nHeadline: \"{{ $json.title }}\"\nDetails: \"{{ $json.contentSnippet }}\"\n\nRules:\n- Keep it strictly under 240 characters.\n- Share a quick takeaway or practical perspective (do not just repeat the headline).\n- Sound like a tech & AI strategist—natural, punchy, and human.\n- Use maximum 1 or 2 relevant hashtags (like #AI #Tech).\n- Output ONLY the final tweet text, nothing else."
+      },
+      "id": "3133c4db-4266-4a66-958a-38e1800b10a2",
+      "name": "Draft Tweet Chain",
+      "type": "@n8n/n8n-nodes-langchain.chainLlm",
+      "typeVersion": 1.5,
+      "position": [
+        624,
+        -48
+      ],
+      "retryOnFail": true,
+      "maxTries": 4,
+      "waitBetweenTries": 5000
+    },
+    {
+      "parameters": {
+        "modelName": "models/gemini-3.5-flash-lite",
+        "options": {
+          "temperature": 0.7
+        }
+      },
+      "id": "a6850b2f-b4e1-4376-805f-eb8003168c7f",
+      "name": "Google Gemini Chat Model",
+      "type": "@n8n/n8n-nodes-langchain.lmChatGoogleGemini",
+      "typeVersion": 1,
+      "position": [
+        624,
+        176
+      ],
+      "credentials": {
+        "googlePalmApi": {
+          "id": "7TnYzV3DjE6buDPx",
+          "name": "Google Gemini(PaLM) Api account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "chatId": "5901797394",
+        "text": "=✅ Approved! Tap the button below to open X with your tweet pre-filled, then press Post.\n\n{{ $('Draft Tweet Chain').item.json.text }}",
+        "replyMarkup": "inlineKeyboard",
+        "inlineKeyboard": {
+          "rows": [
+            {
+              "row": {
+                "buttons": [
+                  {
+                    "text": "🐦 Open in X & Post",
+                    "additionalFields": {
+                      "url": "=https://x.com/intent/tweet?text={{ encodeURIComponent($('Draft Tweet Chain').item.json.text) }}"
+                    }
+                  }
+                ]
+              }
+            }
+          ]
+        },
+        "additionalFields": {
+          "appendAttribution": false
+        }
+      },
+      "id": "8f6f21b7-d7fd-4c4f-ad9e-ab4927815b3c",
+      "name": "Send Tap-to-Post Link",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        944,
+        -48
+      ],
+      "webhookId": "d2de3d53-7881-4e9d-8fef-f2d6970da28d",
+      "credentials": {
+        "telegramApi": {
+          "id": "1bzanc3T1UYvvIpd",
+          "name": "Telegram account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "url": "https://news.google.com/rss/search?q=site:indianexpress.com+when:1d&hl=en-IN&gl=IN&ceid=IN:en",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.rssFeedRead",
+      "typeVersion": 1.2,
+      "position": [
+        160,
+        -48
+      ],
+      "id": "0cb14381-d617-491b-90e6-306e6f5dba0d",
+      "name": "RSS Read"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Schedule Trigger": {
+      "main": [
+        [
+          {
+            "node": "RSS Read",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Keep Top Trend": {
+      "main": [
+        [
+          {
+            "node": "Draft Tweet Chain",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Draft Tweet Chain": {
+      "main": [
+        [
+          {
+            "node": "Send Tap-to-Post Link",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Google Gemini Chat Model": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "Draft Tweet Chain",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "RSS Read": {
+      "main": [
+        [
+          {
+            "node": "Keep Top Trend",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate"
+  },
+  "versionId": "8c058734-569e-4ebe-b70e-dba61537a1b9",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "edc1e12014465db8b567db052f28277dea47211d611ee3e7bab99e50fb6363aa"
+  },
+  "nodeGroups": [],
+  "id": "HDaxWFn58HUGYij9",
+  "tags": []
+}
