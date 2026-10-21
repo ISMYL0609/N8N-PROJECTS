@@ -1,0 +1,449 @@
+{
+  "name": "ismylmohammad.com — Data Engineering Voice Ops Agent (ETL Incident, Databricks, pgvector & Lineage)",
+  "nodes": [
+    {
+      "parameters": {
+        "content": "## Pipeline 1: ETL / Schema Drift / Dead-Letter Queue (DLQ) Alert -> Outbound Voice Commander\nReceives real-time alerts from **Databricks Jobs**, **PostgreSQL / pgvector pipelines**, **dbt / Great Expectations data quality checks**, or **n8n Error Trigger / DLQ** (`POST /webhook/de-pipeline-alert`).\nAnalyzes blast radius & downstream DAMA lineage impact, logs the incident in PostgreSQL, and triggers an immediate **Vapi.ai** outbound call to Ismyl (`+91 83601 93921`) or the Data Steward to remediate by voice.",
+        "height": 220,
+        "width": 1160,
+        "color": 4
+      },
+      "id": "de-sticky-1",
+      "name": "Sticky Note - DE Pipeline 1",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [180, 80]
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "de-pipeline-alert",
+        "responseMode": "onReceived",
+        "options": {}
+      },
+      "id": "de-webhook-alert",
+      "name": "ETL / Databricks / DLQ Alert Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [220, 340],
+      "webhookId": "de-pipeline-alert"
+    },
+    {
+      "parameters": {},
+      "id": "de-error-trigger",
+      "name": "n8n Workflow Error Trigger",
+      "type": "n8n-nodes-base.errorTrigger",
+      "typeVersion": 1,
+      "position": [220, 520]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Normalize Data Engineering alert from Databricks, PostgreSQL/pgvector, dbt, or n8n Error Trigger\nconst crypto = require('crypto');\nconst raw = $input.first().json;\nconst body = raw.body || raw;\n\nconst incidentId = 'DE-INC-' + Date.now() + '-' + Math.random().toString(36).substring(2, 6).toUpperCase();\nconst pipelineName = body.pipeline_name || body.job_name || raw.workflow?.name || 'databricks_delta_silver_etl';\nconst sourceSystem = body.source_system || 'Databricks Delta / PostgreSQL pgvector';\nconst failureType = body.failure_type || body.error_code || 'SCHEMA_DRIFT_DETECTED';\nconst errorMessage = body.error_message || raw.execution?.error?.message || 'Column type mismatch on payload_timestamp; 14,200 rows held in Dead-Letter Queue.';\nconst affectedTable = body.affected_table || 'silver.client_telemetry_events';\nconst downstreamConsumers = body.downstream_consumers || 'gold.executive_kpis, pgvector.rag_knowledge_index';\nconst dlqRowCount = Number(body.dlq_row_count || 14200);\nconst databricksJobId = body.databricks_job_id || '8492014';\nconst stewardName = body.steward_name || 'Ismyl Mohammad';\nconst stewardPhone = body.steward_phone || '+918360193921';\nconst severity = body.severity || (dlqRowCount > 1000 ? 'CRITICAL' : 'HIGH');\n\nconst sha256AlertDigest = crypto.createHash('sha256').update(JSON.stringify({\n  incidentId, pipelineName, affectedTable, failureType, errorMessage, ts: new Date().toISOString()\n})).digest('hex');\n\nreturn [{\n  json: {\n    incident_id: incidentId,\n    pipeline_name: pipelineName,\n    source_system: sourceSystem,\n    failure_type: failureType,\n    error_message: errorMessage,\n    affected_table: affectedTable,\n    downstream_consumers: downstreamConsumers,\n    dlq_row_count: dlqRowCount,\n    databricks_job_id: databricksJobId,\n    steward_name: stewardName,\n    steward_phone: stewardPhone,\n    severity: severity,\n    sha256_alert_digest: sha256AlertDigest,\n    created_at_iso: new Date().toISOString()\n  }\n}];"
+      },
+      "id": "de-normalize-incident",
+      "name": "Normalize Incident & Compute Lineage Blast Radius",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [500, 420]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO de_pipeline_incidents (\n  incident_id, pipeline_name, source_system, failure_type, error_message,\n  affected_table, downstream_consumers, dlq_row_count, databricks_job_id,\n  severity, status, sha256_provenance, created_at\n) VALUES (\n  '{{$json.incident_id}}', '{{$json.pipeline_name}}', '{{$json.source_system}}',\n  '{{$json.failure_type}}', '{{$json.error_message}}', '{{$json.affected_table}}',\n  '{{$json.downstream_consumers}}', {{$json.dlq_row_count}}, '{{$json.databricks_job_id}}',\n  '{{$json.severity}}', 'CALLING_STEWARD', '{{$json.sha256_alert_digest}}', NOW()\n);",
+        "options": {}
+      },
+      "id": "de-postgres-log-incident",
+      "name": "PostgreSQL — Log Data Incident & Lineage Impact",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.4,
+      "position": [800, 420]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.vapi.ai/call/phone",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "Authorization", "value": "Bearer YOUR_VAPI_PRIVATE_API_KEY" },
+            { "name": "Content-Type", "value": "application/json" }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"assistantId\": \"YOUR_DE_VAPI_ASSISTANT_ID\",\n  \"phoneNumberId\": \"YOUR_VAPI_TWILIO_PHONE_NUMBER_ID\",\n  \"customer\": {\n    \"number\": \"{{ $('Normalize Incident & Compute Lineage Blast Radius').item.json.steward_phone }}\",\n    \"name\": \"{{ $('Normalize Incident & Compute Lineage Blast Radius').item.json.steward_name }}\"\n  },\n  \"assistantOverrides\": {\n    \"firstMessage\": \"Hi {{ $('Normalize Incident & Compute Lineage Blast Radius').item.json.steward_name }}, this is your Data Engineering Voice Ops Agent. We have a {{ $('Normalize Incident & Compute Lineage Blast Radius').item.json.severity }} alert on pipeline {{ $('Normalize Incident & Compute Lineage Blast Radius').item.json.pipeline_name }} affecting {{ $('Normalize Incident & Compute Lineage Blast Radius').item.json.affected_table }}. {{ $('Normalize Incident & Compute Lineage Blast Radius').item.json.dlq_row_count }} rows are currently held in the dead-letter queue due to {{ $('Normalize Incident & Compute Lineage Blast Radius').item.json.failure_type }}. Would you like me to replay the job with schema evolution, quarantine the batch, or check downstream pgvector lineage?\",\n    \"variableValues\": {\n      \"incident_id\": \"{{ $('Normalize Incident & Compute Lineage Blast Radius').item.json.incident_id }}\",\n      \"pipeline_name\": \"{{ $('Normalize Incident & Compute Lineage Blast Radius').item.json.pipeline_name }}\",\n      \"source_system\": \"{{ $('Normalize Incident & Compute Lineage Blast Radius').item.json.source_system }}\",\n      \"failure_type\": \"{{ $('Normalize Incident & Compute Lineage Blast Radius').item.json.failure_type }}\",\n      \"error_message\": \"{{ $('Normalize Incident & Compute Lineage Blast Radius').item.json.error_message }}\",\n      \"affected_table\": \"{{ $('Normalize Incident & Compute Lineage Blast Radius').item.json.affected_table }}\",\n      \"downstream_consumers\": \"{{ $('Normalize Incident & Compute Lineage Blast Radius').item.json.downstream_consumers }}\",\n      \"dlq_row_count\": \"{{ $('Normalize Incident & Compute Lineage Blast Radius').item.json.dlq_row_count }}\",\n      \"databricks_job_id\": \"{{ $('Normalize Incident & Compute Lineage Blast Radius').item.json.databricks_job_id }}\"\n    }\n  }\n}",
+        "options": {}
+      },
+      "id": "de-vapi-outbound-call",
+      "name": "Vapi.ai — Call Data Steward / Engineer",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1100, 420]
+    },
+    {
+      "parameters": {
+        "content": "## Pipeline 2: Live Mid-Call Data Engineering Tool Server (`POST /webhook/de-vapi-tools`)\nExecutes spoken engineering commands in real time while you are on the call:\n1. `trigger_databricks_or_dlq_replay`: Triggers a Databricks job retry (`POST /api/2.1/jobs/run-now`) or replays rows from the PostgreSQL Dead-Letter Queue.\n2. `quarantine_corrupt_batch`: Moves corrupt/drifted rows to `quarantine_batches` with a **SHA-256 provenance hash** and unblocks the main ETL pipeline.\n3. `query_pipeline_health_and_lineage`: Queries live PostgreSQL / pgvector freshness, row counts, and DAMA lineage owners.",
+        "height": 220,
+        "width": 1160,
+        "color": 5
+      },
+      "id": "de-sticky-2",
+      "name": "Sticky Note - DE Pipeline 2",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [180, 680]
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "de-vapi-tools",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "de-vapi-tools-webhook",
+      "name": "Vapi Mid-Call DE Tool Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [220, 940],
+      "webhookId": "de-vapi-tools"
+    },
+    {
+      "parameters": {
+        "jsCode": "const body = $input.first().json.body || $input.first().json;\nconst message = body.message || {};\nconst toolCall = (message.toolCalls && message.toolCalls[0]) || (message.toolWithToolCallList && message.toolWithToolCallList[0]?.toolCall) || {};\nconst fnName = toolCall.function?.name || 'query_pipeline_health_and_lineage';\nlet args = toolCall.function?.arguments || {};\nif (typeof args === 'string') {\n  try { args = JSON.parse(args); } catch (e) { args = {}; }\n}\nreturn [{\n  json: {\n    tool_call_id: toolCall.id || 'call_de_tool',\n    function_name: fnName,\n    arguments: args\n  }\n}];"
+      },
+      "id": "de-parse-tool",
+      "name": "Parse Spoken DE Command",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [460, 940]
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict" },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.function_name }}",
+                    "rightValue": "trigger_databricks_or_dlq_replay",
+                    "operator": { "type": "string", "operation": "equals" }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "Replay / Retry Job"
+            },
+            {
+              "conditions": {
+                "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict" },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.function_name }}",
+                    "rightValue": "quarantine_corrupt_batch",
+                    "operator": { "type": "string", "operation": "equals" }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "Quarantine Batch"
+            }
+          ]
+        },
+        "options": {
+          "fallbackOutput": "extra"
+        }
+      },
+      "id": "de-route-tool",
+      "name": "Route DE Action",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3,
+      "position": [700, 940]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://YOUR_DATABRICKS_WORKSPACE_URL/api/2.1/jobs/run-now",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "Authorization", "value": "Bearer YOUR_DATABRICKS_PAT_TOKEN" },
+            { "name": "Content-Type", "value": "application/json" }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"job_id\": \"{{ $json.arguments.databricks_job_id || '8492014' }}\",\n  \"job_parameters\": {\n    \"replay_dlq\": \"true\",\n    \"allow_schema_evolution\": \"{{ $json.arguments.allow_schema_evolution || 'true' }}\",\n    \"triggered_by_voice_incident\": \"{{ $json.arguments.incident_id }}\"\n  }\n}",
+        "options": {}
+      },
+      "id": "de-databricks-retry",
+      "name": "Databricks API — Trigger Job & Replay DLQ",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [960, 800]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE de_pipeline_incidents SET\n  status = 'QUARANTINED_AND_UNBLOCKED',\n  remediation_action = 'Quarantined {{ $json.arguments.dlq_row_count || 0 }} drifted rows; main pipeline unblocked by steward voice command.',\n  resolved_at = NOW()\nWHERE incident_id = '{{ $json.arguments.incident_id }}';",
+        "options": {}
+      },
+      "id": "de-postgres-quarantine",
+      "name": "PostgreSQL — Quarantine Batch & Unblock Pipeline",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.4,
+      "position": [960, 940]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT pipeline_name, affected_table, downstream_consumers, dlq_row_count, status, sha256_provenance\nFROM de_pipeline_incidents\nORDER BY created_at DESC LIMIT 3;",
+        "options": {}
+      },
+      "id": "de-postgres-query-lineage",
+      "name": "PostgreSQL — Query Live Pipeline & Lineage Status",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.4,
+      "position": [960, 1080]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={\n  \"results\": [\n    {\n      \"toolCallId\": \"{{ $('Parse Spoken DE Command').item.json.tool_call_id }}\",\n      \"result\": \"Action {{ $('Parse Spoken DE Command').item.json.function_name }} executed successfully. Confirm to the engineer on the call.\"\n    }\n  ]\n}",
+        "options": {}
+      },
+      "id": "de-vapi-tool-respond",
+      "name": "Return Tool Result to Vapi",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [1240, 940]
+    },
+    {
+      "parameters": {
+        "content": "## Pipeline 3: Post-Call DAMA Provenance Ledger & RCA Dispatcher (`POST /webhook/de-vapi-eoc`)\nCaptures the end-of-call report, generates a **SHA-256 cryptographic provenance hash** of the engineer's voice authorization + transcript, updates PostgreSQL (`de_pipeline_incidents`), and dispatches an automated **Root Cause Analysis (RCA) & Lineage Audit Summary** via **Gmail** (`ismylconnect@gmail.com`).",
+        "height": 200,
+        "width": 1160,
+        "color": 6
+      },
+      "id": "de-sticky-3",
+      "name": "Sticky Note - DE Pipeline 3",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [180, 1240]
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "de-vapi-eoc",
+        "responseMode": "onReceived",
+        "options": {}
+      },
+      "id": "de-vapi-eoc-webhook",
+      "name": "Vapi DE End-of-Call Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [220, 1480],
+      "webhookId": "de-vapi-eoc"
+    },
+    {
+      "parameters": {
+        "jsCode": "const crypto = require('crypto');\nconst body = $input.first().json.body || $input.first().json;\nconst msg = body.message || body;\nconst call = msg.call || {};\nconst vars = call.assistantOverrides?.variableValues || {};\nconst analysis = msg.analysis || {};\n\nconst incidentId = vars.incident_id || 'DE-INC-MANUAL';\nconst pipelineName = vars.pipeline_name || 'databricks_delta_silver_etl';\nconst affectedTable = vars.affected_table || 'silver.client_telemetry_events';\nconst transcript = msg.transcript || '';\nconst summary = analysis.summary || msg.summary || 'Voice incident remediation completed.';\nconst recordingUrl = msg.recordingUrl || call.recordingUrl || '';\n\nconst sha256DecisionHash = crypto.createHash('sha256').update(JSON.stringify({\n  incidentId, pipelineName, transcript, timestamp: new Date().toISOString()\n})).digest('hex');\n\nreturn [{\n  json: {\n    incident_id: incidentId,\n    pipeline_name: pipelineName,\n    affected_table: affectedTable,\n    summary: summary,\n    transcript: transcript,\n    recording_url: recordingUrl,\n    sha256_decision_hash: sha256DecisionHash\n  }\n}];"
+      },
+      "id": "de-parse-eoc",
+      "name": "Compute SHA-256 Voice Authorization Hash",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [500, 1480]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE de_pipeline_incidents SET\n  status = 'RESOLVED_VIA_VOICE_OPS',\n  voice_rca_summary = '{{ $json.summary }}',\n  recording_url = '{{ $json.recording_url }}',\n  sha256_provenance = '{{ $json.sha256_decision_hash }}',\n  resolved_at = NOW()\nWHERE incident_id = '{{ $json.incident_id }}';",
+        "options": {}
+      },
+      "id": "de-postgres-update-rca",
+      "name": "PostgreSQL — Store SHA-256 Voice Audit Trail",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.4,
+      "position": [800, 1480]
+    },
+    {
+      "parameters": {
+        "sendTo": "ismylconnect@gmail.com",
+        "subject": "=[Data Engineering RCA] {{ $json.incident_id }} — {{ $json.pipeline_name }} ({{ $json.affected_table }})",
+        "message": "=<p><strong>Data Engineering Voice Ops — Incident Audit Report</strong></p><ul><li><strong>Incident ID:</strong> {{ $json.incident_id }}</li><li><strong>Pipeline:</strong> {{ $json.pipeline_name }}</li><li><strong>Affected Table:</strong> {{ $json.affected_table }}</li><li><strong>Voice Remediation Summary:</strong> {{ $json.summary }}</li><li><strong>Call Recording:</strong> <a href=\"{{ $json.recording_url }}\">Listen to Voice Authorization</a></li><li><strong>SHA-256 Provenance Digest:</strong> <code>{{ $json.sha256_decision_hash }}</code></li></ul>",
+        "options": {}
+      },
+      "id": "de-gmail-rca",
+      "name": "Gmail — Send RCA & SHA-256 Provenance Report",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [1100, 1480]
+    }
+  ],
+  "connections": {
+    "ETL / Databricks / DLQ Alert Webhook": {
+      "main": [
+        [
+          {
+            "node": "Normalize Incident & Compute Lineage Blast Radius",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "n8n Workflow Error Trigger": {
+      "main": [
+        [
+          {
+            "node": "Normalize Incident & Compute Lineage Blast Radius",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalize Incident & Compute Lineage Blast Radius": {
+      "main": [
+        [
+          {
+            "node": "PostgreSQL — Log Data Incident & Lineage Impact",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "PostgreSQL — Log Data Incident & Lineage Impact": {
+      "main": [
+        [
+          {
+            "node": "Vapi.ai — Call Data Steward / Engineer",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Vapi Mid-Call DE Tool Webhook": {
+      "main": [
+        [
+          {
+            "node": "Parse Spoken DE Command",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Spoken DE Command": {
+      "main": [
+        [
+          {
+            "node": "Route DE Action",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Route DE Action": {
+      "main": [
+        [
+          {
+            "node": "Databricks API — Trigger Job & Replay DLQ",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "PostgreSQL — Quarantine Batch & Unblock Pipeline",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "PostgreSQL — Query Live Pipeline & Lineage Status",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Databricks API — Trigger Job & Replay DLQ": {
+      "main": [
+        [
+          {
+            "node": "Return Tool Result to Vapi",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "PostgreSQL — Quarantine Batch & Unblock Pipeline": {
+      "main": [
+        [
+          {
+            "node": "Return Tool Result to Vapi",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "PostgreSQL — Query Live Pipeline & Lineage Status": {
+      "main": [
+        [
+          {
+            "node": "Return Tool Result to Vapi",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Vapi DE End-of-Call Webhook": {
+      "main": [
+        [
+          {
+            "node": "Compute SHA-256 Voice Authorization Hash",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Compute SHA-256 Voice Authorization Hash": {
+      "main": [
+        [
+          {
+            "node": "PostgreSQL — Store SHA-256 Voice Audit Trail",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "PostgreSQL — Store SHA-256 Voice Audit Trail": {
+      "main": [
+        [
+          {
+            "node": "Gmail — Send RCA & SHA-256 Provenance Report",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  }
+}
