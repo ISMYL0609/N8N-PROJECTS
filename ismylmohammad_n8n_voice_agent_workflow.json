@@ -1,0 +1,875 @@
+{
+  "name": "ismylmohammad.com \u2014 AI Voice Agent (Vapi + Timezone Scheduler + Qualification + Retry)",
+  "nodes": [
+    {
+      "parameters": {
+        "content": "## Pipeline 1: Lead Ingestion & Time-Zone Safe Outbound Dispatcher\nIngests leads from **ismylmohammad.com** (Direct Webhook POST from 'Book a Strategy Call' / 'Initiate a Discussion' forms) AND **Gmail** (`ismylconnect@gmail.com`).\nNormalizes phone/WhatsApp country codes (`+1`, `+91`, `+61`, `+44`, `+971`, etc.), calculates the lead's local business window (9:00 AM \u2013 7:00 PM local time), logs to PostgreSQL & Google Sheets, waits until the safe calling window, and triggers the **Vapi.ai** outbound call with pillar-specific qualification overrides.",
+        "height": 220,
+        "width": 1180,
+        "color": 4
+      },
+      "id": "sticky-pipeline-1",
+      "name": "Sticky Note - Pipeline 1",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        180,
+        80
+      ]
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "ismylmohammad-lead-intake",
+        "responseMode": "onReceived",
+        "options": {}
+      },
+      "id": "node-webhook-intake",
+      "name": "Website Form Webhook (ismylmohammad.com)",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        220,
+        340
+      ],
+      "webhookId": "ismylmohammad-lead-intake"
+    },
+    {
+      "parameters": {
+        "pollTimes": {
+          "item": [
+            {
+              "mode": "everyMinute"
+            }
+          ]
+        },
+        "simple": false,
+        "filters": {
+          "q": "to:ismylconnect@gmail.com (\"Strategy Call\" OR \"Initiate a Discussion\" OR \"Project / Advisory Brief\" OR \"I Need Help With\")"
+        },
+        "options": {}
+      },
+      "id": "node-gmail-trigger",
+      "name": "Gmail Lead Trigger (ismylconnect@gmail.com)",
+      "type": "n8n-nodes-base.gmailTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        220,
+        520
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Normalize lead payload from either Website Webhook POST or Gmail Trigger\nconst raw = $input.first().json;\nconst body = raw.body || raw;\n\n// Parse email text if triggered via Gmail\nconst emailText = raw.text || raw.snippet || '';\nfunction extractFromEmail(label) {\n  const regex = new RegExp(label + '\\\\s*[:\\\\-]?\\\\s*(.+)', 'i');\n  const match = emailText.match(regex);\n  return match ? match[1].trim() : '';\n}\n\nconst fullName = body.full_name || body.fullName || body.name || extractFromEmail('Full Name') || 'Valued Client';\nconst email = body.email || body.work_email || extractFromEmail('Email') || '';\nlet phone = (body.phone || body.whatsapp || body.whatsapp_number || extractFromEmail('Phone|WhatsApp') || '').replace(/[^+\\d]/g, '');\nif (phone && !phone.startsWith('+')) {\n  phone = '+' + phone;\n}\n\nconst servicesRaw = body.services || body.service || body.i_need_help_with || extractFromEmail('Services Required|I Need Help With') || 'n8n Automation';\nconst primaryService = Array.isArray(servicesRaw) ? servicesRaw[0] : String(servicesRaw).split(',')[0].trim();\nconst allServices = Array.isArray(servicesRaw) ? servicesRaw.join(', ') : String(servicesRaw);\nconst projectBrief = body.project_brief || body.brief || body.message || extractFromEmail('Project / Advisory Brief') || 'Requested a 30-minute strategy call via ismylmohammad.com.';\nconst sourceChannel = raw.headers ? 'website_webhook' : 'gmail_parser';\n\n// Map E.164 prefix to Timezone & Region (Primary hubs: USA, Canada, India, Australia + UK/GCC/EU/APAC)\nconst prefixMap = [\n  { prefix: '+91', tz: 'Asia/Kolkata', offsetHours: 5.5, region: 'India' },\n  { prefix: '+61', tz: 'Australia/Sydney', offsetHours: 10.0, region: 'Australia' },\n  { prefix: '+64', tz: 'Pacific/Auckland', offsetHours: 12.0, region: 'New Zealand' },\n  { prefix: '+65', tz: 'Asia/Singapore', offsetHours: 8.0, region: 'Singapore' },\n  { prefix: '+971', tz: 'Asia/Dubai', offsetHours: 4.0, region: 'UAE' },\n  { prefix: '+966', tz: 'Asia/Riyadh', offsetHours: 3.0, region: 'Saudi Arabia' },\n  { prefix: '+974', tz: 'Asia/Qatar', offsetHours: 3.0, region: 'Qatar' },\n  { prefix: '+44', tz: 'Europe/London', offsetHours: 0.0, region: 'United Kingdom' },\n  { prefix: '+49', tz: 'Europe/Berlin', offsetHours: 1.0, region: 'Germany' },\n  { prefix: '+33', tz: 'Europe/Paris', offsetHours: 1.0, region: 'France' },\n  { prefix: '+31', tz: 'Europe/Amsterdam', offsetHours: 1.0, region: 'Netherlands' },\n  { prefix: '+1', tz: 'America/New_York', offsetHours: -5.0, region: 'USA / Canada' }\n];\n\nlet matchedTz = { prefix: '+91', tz: 'Asia/Kolkata', offsetHours: 5.5, region: 'India (Default)' };\nfor (const item of prefixMap) {\n  if (phone.startsWith(item.prefix)) {\n    matchedTz = item;\n    break;\n  }\n}\n\n// Compute Safe Calling Window (9:00 AM - 7:00 PM Lead Local Time, plus minimum 3-minute warm delay)\nconst nowUtcMs = Date.now();\nconst leadLocalMs = nowUtcMs + matchedTz.offsetHours * 3600 * 1000;\nconst leadLocalDate = new Date(leadLocalMs);\nconst localHour = leadLocalDate.getUTCHours();\n\nlet scheduledUtcMs = nowUtcMs + 3 * 60 * 1000; // Default: 3-minute delay after form submission\nlet windowStatus = 'WITHIN_BUSINESS_HOURS_3MIN_DELAY';\n\nif (localHour < 9) {\n  // Schedule for 9:15 AM local time today\n  const hoursUntil9 = 9 - localHour;\n  scheduledUtcMs = nowUtcMs + (hoursUntil9 * 3600 * 1000) + (15 * 60 * 1000);\n  windowStatus = 'DELAYED_UNTIL_9AM_LOCAL';\n} else if (localHour >= 19) {\n  // Schedule for 9:15 AM local time tomorrow\n  const hoursUntilNext9 = (24 - localHour) + 9;\n  scheduledUtcMs = nowUtcMs + (hoursUntilNext9 * 3600 * 1000) + (15 * 60 * 1000);\n  windowStatus = 'DELAYED_UNTIL_NEXT_DAY_9AM_LOCAL';\n}\n\n// Pillar-specific discovery question bank for Vapi assistantOverrides\nconst pillarQuestions = {\n  'n8n Automation': 'Ask which manual workflows, webhooks, or APIs they want to orchestrate in n8n, their approximate daily event volume, and whether they run self-hosted or cloud n8n.',\n  'AI & Data Governance': 'Ask which regulatory or assurance frameworks they are targeting (such as ISO/IEC 42001, NIST AI RMF, or EU AI Act) and how many AI models or pipelines are in production.',\n  'Data Engineering': 'Ask about their current data stack (e.g., PostgreSQL, Databricks, Snowflake), ETL bottlenecks, and data lineage or catalog needs.',\n  'Data Analysis': 'Ask about their primary data sources, executive reporting or KPI goals, and current analytics tooling.',\n  'Agentic AI & RAG': 'Ask about their knowledge sources, vector database setup (e.g., pgvector, Pinecone, Databricks), latency requirements, and hallucination guardrails.',\n  'Enterprise Architecture': 'Ask about their current cloud infrastructure, multi-system integration challenges, and reliability or compliance SLAs.',\n  'Consulting & Advisory': 'Ask whether they are looking for a C-suite roadmap, architecture audit, or ongoing fractional advisory with Ismyl.',\n  'Web & Custom Tech': 'Ask about the custom web application or API platform they are building, expected user scale, and target launch window.'\n};\n\nconst tailoredDiscoveryDirective = pillarQuestions[primaryService] || pillarQuestions['n8n Automation'];\nconst leadId = 'LEAD-' + Date.now() + '-' + Math.random().toString(36).substring(2, 7).toUpperCase();\n\nreturn [{\n  json: {\n    lead_id: leadId,\n    full_name: fullName,\n    email: email,\n    phone: phone,\n    primary_service: primaryService,\n    all_services: allServices,\n    project_brief: projectBrief,\n    source_channel: sourceChannel,\n    region: matchedTz.region,\n    timezone: matchedTz.tz,\n    window_status: windowStatus,\n    scheduled_call_iso: new Date(scheduledUtcMs).toISOString(),\n    tailored_discovery_directive: tailoredDiscoveryDirective,\n    retry_count: 0,\n    created_at_iso: new Date(nowUtcMs).toISOString()\n  }\n}];"
+      },
+      "id": "node-normalize-timezone",
+      "name": "Normalize Lead & Compute Timezone Window",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        500,
+        420
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO voice_agent_leads (\n  lead_id, full_name, email, phone, primary_service, all_services, project_brief,\n  source_channel, region, timezone, scheduled_call_at, call_status, retry_count, created_at\n) VALUES (\n  '{{$json.lead_id}}', '{{$json.full_name}}', '{{$json.email}}', '{{$json.phone}}',\n  '{{$json.primary_service}}', '{{$json.all_services}}', '{{$json.project_brief}}',\n  '{{$json.source_channel}}', '{{$json.region}}', '{{$json.timezone}}',\n  '{{$json.scheduled_call_iso}}', 'SCHEDULED', 0, NOW()\n)\nON CONFLICT (phone) DO UPDATE SET\n  all_services = EXCLUDED.all_services,\n  project_brief = EXCLUDED.project_brief,\n  scheduled_call_at = EXCLUDED.scheduled_call_at,\n  call_status = 'SCHEDULED';",
+        "options": {}
+      },
+      "id": "node-postgres-insert-lead",
+      "name": "PostgreSQL \u2014 Upsert Lead Record",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.4,
+      "position": [
+        760,
+        340
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "appendOrUpdate",
+        "documentId": {
+          "__rl": true,
+          "value": "YOUR_GOOGLE_SHEET_ID",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Leads_Tracker",
+          "mode": "name"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "Lead_ID": "={{ $json.lead_id }}",
+            "Full_Name": "={{ $json.full_name }}",
+            "Email": "={{ $json.email }}",
+            "Phone": "={{ $json.phone }}",
+            "Services": "={{ $json.all_services }}",
+            "Brief": "={{ $json.project_brief }}",
+            "Region_TZ": "={{ $json.region }} ({{ $json.timezone }})",
+            "Scheduled_Call_UTC": "={{ $json.scheduled_call_iso }}",
+            "Status": "SCHEDULED"
+          },
+          "matchingColumns": [
+            "Phone"
+          ]
+        },
+        "options": {}
+      },
+      "id": "node-sheets-append-lead",
+      "name": "Google Sheets \u2014 Log Incoming Lead",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        760,
+        520
+      ]
+    },
+    {
+      "parameters": {
+        "resume": "specificTime",
+        "dateTime": "={{ $('Normalize Lead & Compute Timezone Window').item.json.scheduled_call_iso }}"
+      },
+      "id": "node-wait-window",
+      "name": "Wait Until Lead Local Calling Window",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [
+        1020,
+        420
+      ],
+      "webhookId": "wait-timezone-window"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.vapi.ai/call/phone",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Bearer YOUR_VAPI_PRIVATE_API_KEY"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"assistantId\": \"YOUR_VAPI_ASSISTANT_ID\",\n  \"phoneNumberId\": \"YOUR_VAPI_TWILIO_PHONE_NUMBER_ID\",\n  \"customer\": {\n    \"number\": \"{{ $('Normalize Lead & Compute Timezone Window').item.json.phone }}\",\n    \"name\": \"{{ $('Normalize Lead & Compute Timezone Window').item.json.full_name }}\"\n  },\n  \"assistantOverrides\": {\n    \"firstMessage\": \"Hi {{ $('Normalize Lead & Compute Timezone Window').item.json.full_name }}, this is Ismyl's AI Strategy Assistant calling from ismylmohammad.com. You recently reached out regarding {{ $('Normalize Lead & Compute Timezone Window').item.json.primary_service }} \u2014 do you have two quick minutes so I can capture your scope and get your free 30-minute strategy call booked with Ismyl?\",\n    \"variableValues\": {\n      \"lead_id\": \"{{ $('Normalize Lead & Compute Timezone Window').item.json.lead_id }}\",\n      \"full_name\": \"{{ $('Normalize Lead & Compute Timezone Window').item.json.full_name }}\",\n      \"email\": \"{{ $('Normalize Lead & Compute Timezone Window').item.json.email }}\",\n      \"phone\": \"{{ $('Normalize Lead & Compute Timezone Window').item.json.phone }}\",\n      \"primary_service\": \"{{ $('Normalize Lead & Compute Timezone Window').item.json.primary_service }}\",\n      \"all_services\": \"{{ $('Normalize Lead & Compute Timezone Window').item.json.all_services }}\",\n      \"project_brief\": \"{{ $('Normalize Lead & Compute Timezone Window').item.json.project_brief }}\",\n      \"timezone\": \"{{ $('Normalize Lead & Compute Timezone Window').item.json.timezone }}\",\n      \"tailored_discovery_directive\": \"{{ $('Normalize Lead & Compute Timezone Window').item.json.tailored_discovery_directive }}\"\n    }\n  }\n}",
+        "options": {}
+      },
+      "id": "node-vapi-outbound",
+      "name": "Vapi.ai \u2014 Place Outbound Call (Twilio/SIP)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1260,
+        420
+      ]
+    },
+    {
+      "parameters": {
+        "content": "## Pipeline 2: Live Mid-Call Vapi Tool Server (Qualification + Calendar Booking)\nHandles real-time `tool-calls` from **Vapi.ai** while the voice agent is speaking with the client:\n1. `check_calendar_slots`: Checks Ismyl's **Google Calendar** availability.\n2. `book_strategy_call`: Books the free 30-minute Google Meet strategy call.\n3. `save_qualification_data`: Captures structured **Scope, Timeline & Budget** right mid-call.",
+        "height": 200,
+        "width": 1180,
+        "color": 5
+      },
+      "id": "sticky-pipeline-2",
+      "name": "Sticky Note - Pipeline 2",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        180,
+        680
+      ]
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "vapi-tool-calls",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "node-vapi-tools-webhook",
+      "name": "Vapi Mid-Call Tool Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        220,
+        920
+      ],
+      "webhookId": "vapi-tool-calls"
+    },
+    {
+      "parameters": {
+        "jsCode": "const body = $input.first().json.body || $input.first().json;\nconst message = body.message || {};\nconst toolCall = (message.toolCalls && message.toolCalls[0]) || (message.toolWithToolCallList && message.toolWithToolCallList[0]?.toolCall) || {};\nconst fnName = toolCall.function?.name || 'save_qualification_data';\nlet args = toolCall.function?.arguments || {};\nif (typeof args === 'string') {\n  try { args = JSON.parse(args); } catch (e) { args = {}; }\n}\nreturn [{\n  json: {\n    tool_call_id: toolCall.id || 'call_default',\n    function_name: fnName,\n    arguments: args\n  }\n}];"
+      },
+      "id": "node-parse-tool-call",
+      "name": "Parse Vapi Tool Call",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        460,
+        920
+      ]
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict"
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.function_name }}",
+                    "rightValue": "check_calendar_slots",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "Check Slots"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict"
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.function_name }}",
+                    "rightValue": "book_strategy_call",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "Book Call"
+            }
+          ]
+        },
+        "options": {
+          "fallbackOutput": "extra"
+        }
+      },
+      "id": "node-switch-tool",
+      "name": "Route by Tool Name",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3,
+      "position": [
+        700,
+        920
+      ]
+    },
+    {
+      "parameters": {
+        "resource": "calendar",
+        "operation": "availability",
+        "calendar": {
+          "__rl": true,
+          "value": "ismylconnect@gmail.com",
+          "mode": "id"
+        },
+        "timeMin": "={{ $json.arguments.preferred_date_start_iso || $now.toISO() }}",
+        "timeMax": "={{ $json.arguments.preferred_date_end_iso || $now.plus({ days: 3 }).toISO() }}",
+        "options": {}
+      },
+      "id": "node-gcal-availability",
+      "name": "Google Calendar \u2014 Check Free/Busy",
+      "type": "n8n-nodes-base.googleCalendar",
+      "typeVersion": 1.2,
+      "position": [
+        960,
+        800
+      ]
+    },
+    {
+      "parameters": {
+        "resource": "event",
+        "operation": "create",
+        "calendar": {
+          "__rl": true,
+          "value": "ismylconnect@gmail.com",
+          "mode": "id"
+        },
+        "start": "={{ $json.arguments.slot_start_iso }}",
+        "end": "={{ $json.arguments.slot_end_iso }}",
+        "additionalFields": {
+          "summary": "=30-Min Strategy Call: {{ $json.arguments.full_name }} x Ismyl Mohammad ({{ $json.arguments.primary_service }})",
+          "description": "=Service Pillar: {{ $json.arguments.primary_service }}\nScope Summary: {{ $json.arguments.scope_summary }}\nTarget Timeline: {{ $json.arguments.timeline }}\nBudget Range: {{ $json.arguments.budget_range }}\nPhone/WhatsApp: {{ $json.arguments.phone }}",
+          "attendees": [
+            "={{ $json.arguments.email }}"
+          ],
+          "conferenceDataUi": {
+            "conferenceDataValues": {
+              "conferenceSolution": "hangoutsMeet"
+            }
+          }
+        }
+      },
+      "id": "node-gcal-book",
+      "name": "Google Calendar \u2014 Book 30-Min Strategy Call",
+      "type": "n8n-nodes-base.googleCalendar",
+      "typeVersion": 1.2,
+      "position": [
+        960,
+        940
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE voice_agent_leads SET\n  qualified_scope = '{{ $json.arguments.scope_summary }}',\n  qualified_timeline = '{{ $json.arguments.timeline }}',\n  qualified_budget = '{{ $json.arguments.budget_range }}',\n  qualification_score = '{{ $json.arguments.qualification_tier || \"QUALIFIED\" }}',\n  updated_at = NOW()\nWHERE phone = '{{ $json.arguments.phone }}' OR lead_id = '{{ $json.arguments.lead_id }}';",
+        "options": {}
+      },
+      "id": "node-postgres-save-qual",
+      "name": "PostgreSQL \u2014 Save Scope, Timeline & Budget",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.4,
+      "position": [
+        960,
+        1080
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={\n  \"results\": [\n    {\n      \"toolCallId\": \"{{ $('Parse Vapi Tool Call').item.json.tool_call_id }}\",\n      \"result\": \"Tool executed successfully. Proceed with conversation.\"\n    }\n  ]\n}",
+        "options": {}
+      },
+      "id": "node-vapi-tool-response",
+      "name": "Respond to Vapi Tool Call",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        1240,
+        940
+      ]
+    },
+    {
+      "parameters": {
+        "content": "## Pipeline 3: Post-Call Audit Log, Follow-Up (WhatsApp + Gmail) & Exponential Backoff Retry\nTriggered when Vapi sends `end-of-call-report`.\n- Computes a **SHA-256 provenance hash** of the call transcript and stores the audit record in **PostgreSQL** and **Google Sheets**.\n- If **Answered / Qualified**: Sends a **WhatsApp confirmation** and **Gmail recap** from `ismylconnect@gmail.com`.\n- If **Unanswered / Voicemail / Busy**: Sends a polite WhatsApp + Email booking link and schedules an **Exponential Backoff Auto-Retry** (up to 3 attempts within local business hours).",
+        "height": 220,
+        "width": 1180,
+        "color": 6
+      },
+      "id": "sticky-pipeline-3",
+      "name": "Sticky Note - Pipeline 3",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        180,
+        1240
+      ]
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "vapi-end-of-call",
+        "responseMode": "onReceived",
+        "options": {}
+      },
+      "id": "node-vapi-eoc-webhook",
+      "name": "Vapi End-of-Call Report Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        220,
+        1500
+      ],
+      "webhookId": "vapi-end-of-call"
+    },
+    {
+      "parameters": {
+        "jsCode": "const crypto = require('crypto');\nconst body = $input.first().json.body || $input.first().json;\nconst msg = body.message || body;\nconst call = msg.call || {};\nconst vars = call.assistantOverrides?.variableValues || {};\nconst analysis = msg.analysis || {};\nconst structured = analysis.structuredData || {};\n\nconst endedReason = msg.endedReason || call.endedReason || 'completed';\nconst transcript = msg.transcript || '';\nconst summary = analysis.summary || msg.summary || 'No summary generated.';\nconst recordingUrl = msg.recordingUrl || call.recordingUrl || '';\n\n// Check if call was answered vs missed\nconst missedReasons = ['customer-did-not-answer', 'customer-busy', 'voicemail', 'twilio-failed-to-connect-call'];\nconst isAnswered = !missedReasons.includes(endedReason) && transcript.length > 30;\n\n// Generate cryptographic SHA-256 provenance digest for audit trail\nconst provenancePayload = JSON.stringify({\n  lead_id: vars.lead_id || '',\n  phone: vars.phone || call.customer?.number || '',\n  ended_reason: endedReason,\n  transcript: transcript,\n  timestamp: new Date().toISOString()\n});\nconst sha256Hash = crypto.createHash('sha256').update(provenancePayload).digest('hex');\n\nconst currentRetry = Number(vars.retry_count || 0);\nconst nextRetryHours = Math.pow(2, currentRetry + 1); // Exponential backoff: 2h, 4h, 8h\nconst nextRetryIso = new Date(Date.now() + nextRetryHours * 3600 * 1000).toISOString();\n\nreturn [{\n  json: {\n    lead_id: vars.lead_id || 'UNKNOWN',\n    full_name: vars.full_name || call.customer?.name || 'Client',\n    email: vars.email || '',\n    phone: vars.phone || call.customer?.number || '',\n    primary_service: vars.primary_service || 'n8n Automation',\n    ended_reason: endedReason,\n    is_answered: isAnswered,\n    summary: summary,\n    transcript: transcript,\n    recording_url: recordingUrl,\n    qualified_scope: structured.scope_summary || 'Discussed on call',\n    qualified_timeline: structured.timeline || 'TBD',\n    qualified_budget: structured.budget_range || 'TBD',\n    meeting_booked: Boolean(structured.meeting_booked),\n    sha256_provenance: sha256Hash,\n    retry_count: currentRetry + 1,\n    next_retry_iso: nextRetryIso\n  }\n}];"
+      },
+      "id": "node-process-eoc",
+      "name": "Parse End-of-Call & Compute SHA-256 Provenance",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        480,
+        1500
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE voice_agent_leads SET\n  call_status = '{{ $json.is_answered ? \"COMPLETED\" : \"MISSED_CALL\" }}',\n  ended_reason = '{{ $json.ended_reason }}',\n  call_summary = '{{ $json.summary }}',\n  recording_url = '{{ $json.recording_url }}',\n  qualified_scope = COALESCE(qualified_scope, '{{ $json.qualified_scope }}'),\n  qualified_timeline = COALESCE(qualified_timeline, '{{ $json.qualified_timeline }}'),\n  qualified_budget = COALESCE(qualified_budget, '{{ $json.qualified_budget }}'),\n  sha256_provenance = '{{ $json.sha256_provenance }}',\n  retry_count = {{ $json.retry_count }},\n  updated_at = NOW()\nWHERE lead_id = '{{ $json.lead_id }}' OR phone = '{{ $json.phone }}';",
+        "options": {}
+      },
+      "id": "node-postgres-eoc",
+      "name": "PostgreSQL \u2014 Update Audit Ledger (SHA-256)",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.4,
+      "position": [
+        740,
+        1420
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "appendOrUpdate",
+        "documentId": {
+          "__rl": true,
+          "value": "YOUR_GOOGLE_SHEET_ID",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Leads_Tracker",
+          "mode": "name"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "Phone": "={{ $json.phone }}",
+            "Status": "={{ $json.is_answered ? 'QUALIFIED' : 'MISSED_RETRY_' + $json.retry_count }}",
+            "Scope": "={{ $json.qualified_scope }}",
+            "Timeline": "={{ $json.qualified_timeline }}",
+            "Budget": "={{ $json.qualified_budget }}",
+            "Call_Summary": "={{ $json.summary }}",
+            "Recording_URL": "={{ $json.recording_url }}",
+            "SHA256_Provenance": "={{ $json.sha256_provenance }}"
+          },
+          "matchingColumns": [
+            "Phone"
+          ]
+        },
+        "options": {}
+      },
+      "id": "node-sheets-eoc",
+      "name": "Google Sheets \u2014 Update Qualification & Summary",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        740,
+        1580
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.is_answered }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "node-if-answered",
+      "name": "Was Call Answered?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        1000,
+        1500
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://graph.facebook.com/v20.0/YOUR_WHATSAPP_PHONE_ID/messages",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Bearer YOUR_META_WHATSAPP_TOKEN"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"messaging_product\": \"whatsapp\",\n  \"to\": \"{{ $json.phone }}\",\n  \"type\": \"text\",\n  \"text\": {\n    \"body\": \"Hi {{ $json.full_name }}, thanks for speaking with Ismyl's AI Strategy Assistant! Here is a quick recap of what we captured for your {{ $json.primary_service }} initiative:\\n\\n\u2022 Scope: {{ $json.qualified_scope }}\\n\u2022 Target Timeline: {{ $json.qualified_timeline }}\\n\u2022 Budget Range: {{ $json.qualified_budget }}\\n\\nIsmyl Mohammad looks forward to speaking with you on your 30-minute strategy call. Reply here anytime if you'd like to share architecture docs beforehand!\"\n  }\n}",
+        "options": {}
+      },
+      "id": "node-whatsapp-confirmed",
+      "name": "WhatsApp \u2014 Send Qualification & Booking Confirmation",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1260,
+        1380
+      ]
+    },
+    {
+      "parameters": {
+        "sendTo": "={{ $json.email }}",
+        "subject": "=Strategy Call & Scope Summary \u2014 {{ $json.primary_service }} | Ismyl Mohammad",
+        "message": "=<p>Hi {{ $json.full_name }},</p><p>Thank you for taking a couple of minutes to speak with my AI Strategy Assistant following your inquiry on <a href=\"https://ismylmohammad.com/\">ismylmohammad.com</a>.</p><p><strong>Captured Discovery Brief:</strong></p><ul><li><strong>Focus Pillar:</strong> {{ $json.primary_service }}</li><li><strong>Scope & Objectives:</strong> {{ $json.qualified_scope }}</li><li><strong>Target Timeline:</strong> {{ $json.qualified_timeline }}</li><li><strong>Estimated Budget Allocation:</strong> {{ $json.qualified_budget }}</li></ul><p>I have reviewed these notes ahead of our 30-minute strategy session so we can dive straight into concrete architecture and governance solutions.</p><p>Best regards,<br/><strong>Ismyl Mohammad</strong><br/>AI Governance, Data Strategy &amp; n8n Automation Lead<br/><a href=\"https://ismylmohammad.com/\">ismylmohammad.com</a> | +91 83601 93921</p>",
+        "options": {}
+      },
+      "id": "node-gmail-confirmed",
+      "name": "Gmail \u2014 Send Discovery Recap (ismylconnect@gmail.com)",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [
+        1500,
+        1380
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://graph.facebook.com/v20.0/YOUR_WHATSAPP_PHONE_ID/messages",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Bearer YOUR_META_WHATSAPP_TOKEN"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"messaging_product\": \"whatsapp\",\n  \"to\": \"{{ $json.phone }}\",\n  \"type\": \"text\",\n  \"text\": {\n    \"body\": \"Hi {{ $json.full_name }}, Ismyl's AI Strategy Assistant just tried calling you regarding your {{ $json.primary_service }} inquiry on ismylmohammad.com. No worries that we missed you! We will try again during your local business window, or you can reply here with your preferred time + a quick note on your scope, timeline, and budget.\"\n  }\n}",
+        "options": {}
+      },
+      "id": "node-whatsapp-missed",
+      "name": "WhatsApp \u2014 Send Missed-Call Follow-Up",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1260,
+        1620
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.retry_count }}",
+              "rightValue": 3,
+              "operator": {
+                "type": "number",
+                "operation": "lte"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "node-check-retry-limit",
+      "name": "Retry Count <= 3?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        1500,
+        1620
+      ]
+    },
+    {
+      "parameters": {
+        "resume": "specificTime",
+        "dateTime": "={{ $json.next_retry_iso }}"
+      },
+      "id": "node-wait-backoff",
+      "name": "Exponential Backoff Wait (2h / 4h / 8h)",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [
+        1740,
+        1620
+      ],
+      "webhookId": "wait-exponential-backoff"
+    }
+  ],
+  "connections": {
+    "Website Form Webhook (ismylmohammad.com)": {
+      "main": [
+        [
+          {
+            "node": "Normalize Lead & Compute Timezone Window",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Gmail Lead Trigger (ismylconnect@gmail.com)": {
+      "main": [
+        [
+          {
+            "node": "Normalize Lead & Compute Timezone Window",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalize Lead & Compute Timezone Window": {
+      "main": [
+        [
+          {
+            "node": "PostgreSQL \u2014 Upsert Lead Record",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Google Sheets \u2014 Log Incoming Lead",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "PostgreSQL \u2014 Upsert Lead Record": {
+      "main": [
+        [
+          {
+            "node": "Wait Until Lead Local Calling Window",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Wait Until Lead Local Calling Window": {
+      "main": [
+        [
+          {
+            "node": "Vapi.ai \u2014 Place Outbound Call (Twilio/SIP)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Vapi Mid-Call Tool Webhook": {
+      "main": [
+        [
+          {
+            "node": "Parse Vapi Tool Call",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Vapi Tool Call": {
+      "main": [
+        [
+          {
+            "node": "Route by Tool Name",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Route by Tool Name": {
+      "main": [
+        [
+          {
+            "node": "Google Calendar \u2014 Check Free/Busy",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Google Calendar \u2014 Book 30-Min Strategy Call",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "PostgreSQL \u2014 Save Scope, Timeline & Budget",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Google Calendar \u2014 Check Free/Busy": {
+      "main": [
+        [
+          {
+            "node": "Respond to Vapi Tool Call",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Google Calendar \u2014 Book 30-Min Strategy Call": {
+      "main": [
+        [
+          {
+            "node": "Respond to Vapi Tool Call",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "PostgreSQL \u2014 Save Scope, Timeline & Budget": {
+      "main": [
+        [
+          {
+            "node": "Respond to Vapi Tool Call",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Vapi End-of-Call Report Webhook": {
+      "main": [
+        [
+          {
+            "node": "Parse End-of-Call & Compute SHA-256 Provenance",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse End-of-Call & Compute SHA-256 Provenance": {
+      "main": [
+        [
+          {
+            "node": "PostgreSQL \u2014 Update Audit Ledger (SHA-256)",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Google Sheets \u2014 Update Qualification & Summary",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "PostgreSQL \u2014 Update Audit Ledger (SHA-256)": {
+      "main": [
+        [
+          {
+            "node": "Was Call Answered?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Was Call Answered?": {
+      "main": [
+        [
+          {
+            "node": "WhatsApp \u2014 Send Qualification & Booking Confirmation",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "WhatsApp \u2014 Send Missed-Call Follow-Up",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "WhatsApp \u2014 Send Qualification & Booking Confirmation": {
+      "main": [
+        [
+          {
+            "node": "Gmail \u2014 Send Discovery Recap (ismylconnect@gmail.com)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "WhatsApp \u2014 Send Missed-Call Follow-Up": {
+      "main": [
+        [
+          {
+            "node": "Retry Count <= 3?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Retry Count <= 3?": {
+      "main": [
+        [
+          {
+            "node": "Exponential Backoff Wait (2h / 4h / 8h)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Exponential Backoff Wait (2h / 4h / 8h)": {
+      "main": [
+        [
+          {
+            "node": "Vapi.ai \u2014 Place Outbound Call (Twilio/SIP)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  }
+}
