@@ -1,0 +1,249 @@
+{
+  "name": "Ismyl Traffic Agent - LinkedIn",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "hours"
+            }
+          ]
+        }
+      },
+      "id": "dd59107a-7f6b-4d7a-9bbb-3ce79015f477",
+      "name": "Mon Wed Fri 8:30am",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.4,
+      "position": [
+        0,
+        304
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// ===== EDIT THESE =====\nconst TELEGRAM_CHAT_ID = 'PASTE_YOUR_TELEGRAM_CHAT_ID';\nconst pages = [\n  { url: 'https://ismylmohammad.com/', title: 'Ismyl Mohammad | AI, Data & Automation Consulting', description: 'Services, sample projects and a free readiness check.' },\n  { url: 'https://ismylmohammad.com/articles', title: 'Articles | Ismyl Mohammad', description: 'Practical guides on automation, data and AI.' }\n];\n// ======================\n\nconst pillars = [\n  { service: 'n8n workflow automation', angle: 'removing repetitive manual work with automated workflows' },\n  { service: 'AI and data governance', angle: 'using AI safely: policies, data ownership, risk and compliance' },\n  { service: 'data engineering', angle: 'reliable data pipelines and getting data out of spreadsheets and silos' },\n  { service: 'data analysis', angle: 'turning raw business data into decisions people actually act on' },\n  { service: 'agentic AI and RAG', angle: 'AI agents and assistants grounded in a company\\'s own documents and data' },\n  { service: 'enterprise architecture', angle: 'connecting systems so tools, data and processes fit together' },\n  { service: 'consulting and advisory', angle: 'how to scope, prioritise and start an AI or data project without wasting money' }\n];\nconst audiences = [\n  { name: 'small business owners and founders', pain: 'manual admin, scattered spreadsheets, slow follow-ups, too little time', tone: 'practical, plain English, zero jargon' },\n  { name: 'data and AI leaders at mid-size and large companies', pain: 'AI risk and governance, messy pipelines, unclear data ownership, pilots that never reach production', tone: 'strategic, credible, specific' }\n];\nconst formats = [\n  'a practical how-to with 3 to 5 concrete steps',\n  'a common mistake and how to avoid it',\n  'myth vs reality',\n  'a short checklist the reader can use today',\n  'a before-and-after of a manual process vs an automated or well-designed one (clearly hypothetical)'\n];\n\nconst s = $getWorkflowStaticData('global');\nconst count = s.count || 0;\ns.count = count + 1;\nconst pillar = pillars[count % pillars.length];\nconst audience = audiences[count % audiences.length];\nconst format = formats[count % formats.length];\nconst page = pages[count % pages.length];\nconst recent = (s.recent || []).join(' | ') || 'none yet';\n\nreturn [{ json: {\n  telegramChatId: TELEGRAM_CHAT_ID,\n  service: pillar.service, angle: pillar.angle,\n  audience: audience.name, pain: audience.pain, tone: audience.tone,\n  format, recentTopics: recent,\n  linkUrl: page.url, linkTitle: page.title, linkDescription: page.description\n} }];"
+      },
+      "id": "60e461b8-74af-437d-befd-06febbbe9572",
+      "name": "Plan next post",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        240,
+        304
+      ]
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "=Write one LinkedIn post.\n\nService area: {{ $json.service }} ({{ $json.angle }})\nAudience: {{ $json.audience }}\nTheir pains: {{ $json.pain }}\nTone: {{ $json.tone }}\nFormat: {{ $json.format }}\nAvoid repeating these recent topics: {{ $json.recentTopics }}\n\nThe post will have a link card to {{ $json.linkUrl }} ({{ $json.linkDescription }}) attached underneath it.",
+        "hasOutputParser": true,
+        "messages": {
+          "messageValues": [
+            {
+              "message": "You write LinkedIn posts in the first person for Ismyl Mohammad, an independent consultant in n8n automation, AI and data governance, data engineering, data analysis, agentic AI and RAG, enterprise architecture, and consulting.\n\nGoal: give genuinely useful insight so the right readers trust Ismyl and click through to his website.\n\nRules:\n- 120 to 220 words. Short paragraphs, one idea per line, easy to read on a phone.\n- Open with a specific, concrete first line. No hype, no \"In today's fast-paced world\", no \"game-changer\", no rhetorical \"Here's the thing\".\n- Never invent clients, case studies, results, percentages or numbers. Use clearly hypothetical examples (\"Imagine a 10-person agency...\") or general patterns instead.\n- Do not put any URL in the post text. Instead, the last lines should naturally point readers to the link below (for example \"More on this on my site, linked below.\").\n- End with one simple question to invite comments.\n- At most 3 relevant hashtags at the very end.\n- Plain text only: no markdown, no bold, at most 2 emojis."
+            }
+          ]
+        },
+        "batching": {}
+      },
+      "id": "a6851269-16ba-43b9-be12-13eb01ca358f",
+      "name": "Write LinkedIn post",
+      "type": "@n8n/n8n-nodes-langchain.chainLlm",
+      "typeVersion": 1.9,
+      "position": [
+        480,
+        304
+      ]
+    },
+    {
+      "parameters": {
+        "options": {
+          "maxOutputTokens": 8192,
+          "temperature": 0.7
+        }
+      },
+      "id": "2b1b5fcd-153d-4592-9ab4-6efeaf6fcde8",
+      "name": "Gemini",
+      "type": "@n8n/n8n-nodes-langchain.lmChatGoogleGemini",
+      "typeVersion": 1.2,
+      "position": [
+        432,
+        528
+      ],
+      "credentials": {
+        "googlePalmApi": {
+          "id": "87hu3tgnDcsbzoZa",
+          "name": "Google Gemini(PaLM) Api account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsonSchemaExample": "{ \"topic\": \"One-line summary of the topic\", \"post\": \"The full LinkedIn post text including up to 3 hashtags at the end\" }"
+      },
+      "id": "69749764-dfff-4c71-86e5-755d55666d52",
+      "name": "Post format",
+      "type": "@n8n/n8n-nodes-langchain.outputParserStructured",
+      "typeVersion": 1.3,
+      "position": [
+        608,
+        528
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const s = $getWorkflowStaticData('global');\nconst recent = s.recent || [];\nfor (const item of $input.all()) {\n  if (item.json.output && item.json.output.topic) recent.push(item.json.output.topic);\n}\ns.recent = recent.slice(-12);\nreturn $input.all();"
+      },
+      "id": "0bf4e3a0-a873-41a0-a8f6-e6ed9a9c5b89",
+      "name": "Remember topic",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        784,
+        304
+      ]
+    },
+    {
+      "parameters": {
+        "person": "BQdbxRG15U",
+        "text": "={{ $('Write LinkedIn post').item.json.output.post }}",
+        "shareMediaCategory": "ARTICLE",
+        "additionalFields": {
+          "description": "={{ $('Plan next post').item.json.linkDescription }}",
+          "originalUrl": "={{ $('Plan next post').item.json.linkUrl }}",
+          "title": "={{ $('Plan next post').item.json.linkTitle }}",
+          "visibility": "PUBLIC"
+        }
+      },
+      "id": "31817c6c-4626-4eda-b1ad-538e135696b5",
+      "name": "Post to LinkedIn",
+      "type": "n8n-nodes-base.linkedIn",
+      "typeVersion": 1,
+      "position": [
+        1568,
+        -96
+      ],
+      "credentials": {
+        "linkedInOAuth2Api": {
+          "id": "yc5BZvWFJfi6s2uH",
+          "name": "LinkedIn account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "content": "## Setup (2 minutes)\n1. **Plan next post**: paste your Telegram chat ID (message @userinfobot on Telegram to get it). Add more site pages to the `pages` list as you publish them (service pages, articles).\n2. **Post to LinkedIn**: pick your profile in the Person dropdown.\n3. Run once with **Execute workflow** to test, then **Publish**.\n\nRuns Mon/Wed/Fri 8:30am. Rotates 7 service topics, 2 audiences and 5 post formats, and avoids repeating recent topics. Posts straight to LinkedIn.",
+        "height": 280,
+        "width": 560,
+        "color": 4
+      },
+      "id": "34847252-d201-4ec1-9998-34cfd7cd35f2",
+      "name": "Sticky Note 5b55ed36",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        192,
+        -176
+      ]
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Mon Wed Fri 8:30am": {
+      "main": [
+        [
+          {
+            "node": "Plan next post",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Plan next post": {
+      "main": [
+        [
+          {
+            "node": "Write LinkedIn post",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Write LinkedIn post": {
+      "main": [
+        [
+          {
+            "node": "Remember topic",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Gemini": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "Write LinkedIn post",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Post format": {
+      "ai_outputParser": [
+        [
+          {
+            "node": "Write LinkedIn post",
+            "type": "ai_outputParser",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Remember topic": {
+      "main": [
+        [
+          {
+            "node": "Post to LinkedIn",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "availableInMCP": true
+  },
+  "versionId": "5583c3ee-a16b-4d34-a8eb-83d0f3c78a5c",
+  "meta": {
+    "aiBuilderAssisted": true,
+    "builderVariant": "mcp",
+    "templateCredsSetupCompleted": true,
+    "instanceId": "875952d2caa15020c9173c6d526620b7919d3cddce0c0ee6e72f693e0030c479"
+  },
+  "nodeGroups": [
+    {
+      "id": "3f103950-3fd7-4e6a-b3c9-382b453080a8",
+      "name": "Plan and write",
+      "nodeIds": [
+        "60e461b8-74af-437d-befd-06febbbe9572",
+        "a6851269-16ba-43b9-be12-13eb01ca358f",
+        "2b1b5fcd-153d-4592-9ab4-6efeaf6fcde8",
+        "69749764-dfff-4c71-86e5-755d55666d52",
+        "0bf4e3a0-a873-41a0-a8f6-e6ed9a9c5b89"
+      ],
+      "description": "Picks a service topic, audience and format, writes a post in your voice, and remembers it to avoid repeats"
+    }
+  ],
+  "id": "payC9Oee954JHDht",
+  "tags": []
+}
